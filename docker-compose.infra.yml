@@ -1,0 +1,62 @@
+networks:
+  dpe-network:
+    driver: bridge
+    name: dpe-network
+
+services:
+
+  dpe.terraform-init.internal:
+    container_name: dpe.terraform-init.internal
+    depends_on:
+      - dpe.localstack.internal
+    image: hashicorp/terraform:light
+    command: ["init"]
+    working_dir: ${TERRAFORM_CONTAINER_PATH}
+    networks:
+      - dpe-network
+    volumes:
+      - ${TERRAFORM_HOST_PATH}:${TERRAFORM_CONTAINER_PATH}
+
+  dpe.terraform-apply.internal:
+    container_name: dpe.terraform-apply.internal
+    depends_on:
+      - dpe.terraform-init.internal
+    image: hashicorp/terraform:light
+    command: ["apply", "-auto-approve"]
+    working_dir: ${TERRAFORM_CONTAINER_PATH}
+    networks:
+      - dpe-network
+    volumes:
+      - ${TERRAFORM_HOST_PATH}:${TERRAFORM_CONTAINER_PATH}
+
+  dpe.localstack.internal:
+    container_name: dpe.localstack.internal
+    image: localstack/localstack
+    ports:
+      - 4566:4566
+      - 4510-4559:4510-4559
+    networks:
+      - dpe-network
+
+  dpe.nginx.internal:
+    container_name: dpe.nginx.internal
+    image: nginx:1.25.2-alpine
+    ports:
+      - 44300:44300
+    volumes:
+      - ${NGINX_CONF_HOST_PATH}:${NGINX_CONF_CONTAINER_PATH}
+      - ${NGINX_CERT_HOST_PATH}:${NGINX_CERT_CONTAINER_PATH}
+      - ${NGINX_KEY_HOST_PATH}:${NGINX_KEY_CONTAINER_PATH}
+    networks:
+      - dpe-network
+
+  dpe.database.internal:
+    container_name: dpe.database.internal
+    image: postgres:16.0-alpine
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    networks:
+      - dpe-network

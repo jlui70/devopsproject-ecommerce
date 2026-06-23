@@ -1,0 +1,37 @@
+networks:
+  dpe-network:
+    external: true
+
+services:
+
+  dpe.invoice.internal:
+    container_name: dpe.invoice.internal
+    image: dpe/invoice
+    ports:
+      - 5004:443
+    build:
+      context: .
+      dockerfile: src/workers/NotSoSimpleEcommerce.InvoiceGenerator/Dockerfile
+    env_file:
+      - ./.env
+    volumes:
+      - ${CERTIFICATES_HOST_PATH}:${CERTIFICATES_CONTAINER_PATH}
+      - ${AWS_CREDENTIALS_HOST_PATH}:${AWS_CREDENTIALS_CONTAINER_PATH}
+    networks:
+      - dpe-network
+
+  dpe.notificator.internal:
+    container_name: dpe.notificator.internal
+    image: dpe/notificator
+    ports:
+      - 5005:443
+    build:
+      context: .
+      dockerfile: src/workers/NotSoSimpleEcommerce.Notificator/Dockerfile
+    env_file:
+      - ./.env
+    volumes:
+      - ${CERTIFICATES_HOST_PATH}:${CERTIFICATES_CONTAINER_PATH}
+      - ${AWS_CREDENTIALS_HOST_PATH}:${AWS_CREDENTIALS_CONTAINER_PATH}
+    networks:
+      - dpe-network

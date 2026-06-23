@@ -1,0 +1,81 @@
+networks:
+  dpe-network:
+    external: true
+
+services:
+
+  dpe.site.internal:
+    container_name: dpe.site.internal
+    image: dpe/site
+    ports:
+      - 3000:3000
+    build:
+      context: src/frontend
+      dockerfile: Dockerfile
+    networks:
+      - dpe-network
+
+  dpe.main.internal:
+    container_name: dpe.main.internal
+    image: dpe/main
+    ports:
+      - 5000:443
+    build:
+      context: .
+      dockerfile: src/services/NotSoSimpleEcommerce.Main/Dockerfile
+    env_file:
+      - ./.env
+    volumes:
+      - ${CERTIFICATES_HOST_PATH}:${CERTIFICATES_CONTAINER_PATH}
+      - ${AWS_CREDENTIALS_HOST_PATH}:${AWS_CREDENTIALS_CONTAINER_PATH}
+      - ${MONGO_CERTIFICATE_HOST_PATH}:${MONGO_CERTIFICATE_CONTAINER_PATH}
+    networks:
+      - dpe-network
+
+  dpe.order.internal:
+    container_name: dpe.order.internal
+    image: dpe/order
+    ports:
+      - 5001:443
+    build:
+      context: .
+      dockerfile: src/services/NotSoSimpleEcommerce.Order/Dockerfile
+    env_file:
+      - ./.env
+    volumes:
+      - ${CERTIFICATES_HOST_PATH}:${CERTIFICATES_CONTAINER_PATH}
+      - ${AWS_CREDENTIALS_HOST_PATH}:${AWS_CREDENTIALS_CONTAINER_PATH}
+    networks:
+      - dpe-network
+
+  dpe.identity.internal:
+    container_name: dpe.identity.internal
+    image: dpe/identity
+    ports:
+      - 5002:443
+    build:
+      context: .
+      dockerfile: src/services/NotSoSimpleEcommerce.IdentityServer/Dockerfile
+    env_file:
+      - ./.env
+    volumes:
+      - ${CERTIFICATES_HOST_PATH}:${CERTIFICATES_CONTAINER_PATH}
+      - ${AWS_CREDENTIALS_HOST_PATH}:${AWS_CREDENTIALS_CONTAINER_PATH}
+    networks:
+      - dpe-network
+
+  dpe.health-checker.internal:
+    container_name: dpe.health-checker.internal
+    image: dpe/health-checker
+    ports:
+      - 5003:443
+    build:
+      context: .
+      dockerfile: src/services/NotSoSimpleEcommerce.HealthChecker/Dockerfile
+    env_file:
+      - ./.env
+    volumes:
+      - ${CERTIFICATES_HOST_PATH}:${CERTIFICATES_CONTAINER_PATH}
+      - ${AWS_CREDENTIALS_HOST_PATH}:${AWS_CREDENTIALS_CONTAINER_PATH}
+    networks:
+      - dpe-network
