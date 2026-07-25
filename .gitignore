@@ -539,3 +539,11 @@ FodyWeavers.xsd
 # Additional files built by Visual Studio
 
 # End of https://www.toptal.com/developers/gitignore/api/visualstudio,aspnetcore,dotnetcore.terraform/
+
+# Terraform local state (iac/)
+iac/.terraform/
+iac/terraform.tfstate
+iac/terraform.tfstate.backup
+
+# Frontend build output
+src/frontend/dist/
