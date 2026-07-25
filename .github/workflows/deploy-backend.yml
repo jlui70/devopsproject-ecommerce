@@ -1,0 +1,59 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'src/services/**'
+      - 'src/workers/**'
+      - 'src/domains/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  ECR_BASE: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/devopsproject/prod
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - name: main
+            dockerfile: src/services/DevOpsProjectEcommerce.Main/Dockerfile
+          - name: order
+            dockerfile: src/services/DevOpsProjectEcommerce.Order/Dockerfile
+          - name: identity-server
+            dockerfile: src/services/DevOpsProjectEcommerce.IdentityServer/Dockerfile
+          - name: health-checker
+            dockerfile: src/services/DevOpsProjectEcommerce.HealthChecker/Dockerfile
+          - name: notificator
+            dockerfile: src/workers/DevOpsProjectEcommerce.Notificator/Dockerfile
+          - name: invoice-generator
+            dockerfile: src/workers/DevOpsProjectEcommerce.InvoiceGenerator/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.BACKEND_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push ${{ matrix.service.name }}
+        run: |
+          IMAGE="${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ github.sha }}"
+          LATEST="${{ env.ECR_BASE }}/${{ matrix.service.name }}:latest"
+          docker build -f ${{ matrix.service.dockerfile }} -t "$IMAGE" -t "$LATEST" .
+          docker push "$IMAGE"
+          docker push "$LATEST"
