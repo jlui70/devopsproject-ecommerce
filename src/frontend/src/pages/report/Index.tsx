@@ -34,8 +34,12 @@ const Report: React.FC = () => {
         accessorKey: 'averagePrice',
         header: 'Preço Médio',
         size: 130,
-        Cell: ({ cell }) =>
-          Number(cell.getValue()).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+        Cell: ({ row }) => {
+          const avg = row.original.totalOrdered > 0
+            ? row.original.totalSold / row.original.totalOrdered
+            : 0;
+          return avg.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        },
       },
       {
         accessorKey: 'totalSold',

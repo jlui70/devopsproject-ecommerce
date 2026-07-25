@@ -31,10 +31,12 @@ import { useProduct } from '../../hooks/useProduct';
 import { useQueryClient } from '@tanstack/react-query';
 
 const STATUS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> = {
-  Pending: 'warning',
-  Processing: 'warning',
-  Completed: 'success',
-  Cancelled: 'error',
+  Pendente:    'warning',
+  Confirmado:  'success',
+  Pending:     'warning',
+  Processing:  'warning',
+  Completed:   'success',
+  Cancelled:   'error',
 };
 
 const Order: React.FC = () => {
@@ -47,14 +49,41 @@ const Order: React.FC = () => {
   const queryClient = useQueryClient();
 
   const toggle = () => setChanged((c) => !c);
-  const createOrder = useCreateOrder({ onSuccess: toggle });
+  const createOrder = useCreateOrder({
+    onSuccess: (newOrder) => {
+      // Mostra imediatamente como Pendente enquanto Lambda processa
+      setTableData((prev) => [...prev, newOrder]);
+      // Inicia polling para detectar confirmação (Pendente → Confirmado)
+      toggle();
+    },
+  });
   const updateOrder = useUpdateOrder({ onSuccess: toggle });
   const deleteOrder = useDeleteOrder({ onSuccess: toggle });
 
   useEffect(() => {
     queryClient.invalidateQueries({ queryKey: ['order'] });
+    queryClient.invalidateQueries({ queryKey: ['stock'] });
+    queryClient.invalidateQueries({ queryKey: ['report'] });
     getOrders().then((res) => setTableData(res ?? []));
   }, [changed]);
+
+  // Polling automático enquanto houver pedidos Pendente (Lambda processando)
+  useEffect(() => {
+    const hasPending = tableData.some((o) => o.status === 'Pendente');
+    if (!hasPending) return;
+
+    const interval = setInterval(async () => {
+      const updated = await getOrders();
+      setTableData(updated ?? []);
+      if (!updated?.some((o) => o.status === 'Pendente')) {
+        clearInterval(interval);
+        queryClient.invalidateQueries({ queryKey: ['stock'] });
+        queryClient.invalidateQueries({ queryKey: ['report'] });
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [tableData]);
 
   const handleCreateNewRow = (values: { productId: number; quantity: number }) => {
     createOrder.mutate({ productId: values.productId, quantity: values.quantity });

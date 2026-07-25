@@ -27,7 +27,7 @@ function generateCACertificate(){
             -days $days \
             -sha256 \
             -out ../certificates/root-ca.crt \
-            -subj /CN=devopsnanuvem.internal
+            -subj /CN=devopsproject.internal
     else
         echo "root-ca.crt already exists"
     fi
@@ -44,7 +44,7 @@ function generateCertificateSigningRequest(){
             -newkey rsa:$keySize \
             -keyout ../certificates/signing-request.key \
             -out ../certificates/signing-request.csr \
-            -subj /CN=devopsnanuvem.internal 
+            -subj /CN=devopsproject.internal 
     else
         echo "signing-request.key and signing-request.csr already exists"
     fi

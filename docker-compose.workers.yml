@@ -11,7 +11,7 @@ services:
       - 5004:443
     build:
       context: .
-      dockerfile: src/workers/NotSoSimpleEcommerce.InvoiceGenerator/Dockerfile
+      dockerfile: src/workers/DevOpsProjectEcommerce.InvoiceGenerator/Dockerfile
     env_file:
       - ./.env
     volumes:
@@ -27,7 +27,7 @@ services:
       - 5005:443
     build:
       context: .
-      dockerfile: src/workers/NotSoSimpleEcommerce.Notificator/Dockerfile
+      dockerfile: src/workers/DevOpsProjectEcommerce.Notificator/Dockerfile
     env_file:
       - ./.env
     volumes:

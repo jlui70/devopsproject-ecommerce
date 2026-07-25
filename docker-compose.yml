@@ -22,7 +22,7 @@ services:
       - 5000:443
     build:
       context: .
-      dockerfile: src/services/NotSoSimpleEcommerce.Main/Dockerfile
+      dockerfile: src/services/DevOpsProjectEcommerce.Main/Dockerfile
     env_file:
       - ./.env
     volumes:
@@ -39,7 +39,7 @@ services:
       - 5001:443
     build:
       context: .
-      dockerfile: src/services/NotSoSimpleEcommerce.Order/Dockerfile
+      dockerfile: src/services/DevOpsProjectEcommerce.Order/Dockerfile
     env_file:
       - ./.env
     volumes:
@@ -55,7 +55,7 @@ services:
       - 5002:443
     build:
       context: .
-      dockerfile: src/services/NotSoSimpleEcommerce.IdentityServer/Dockerfile
+      dockerfile: src/services/DevOpsProjectEcommerce.IdentityServer/Dockerfile
     env_file:
       - ./.env
     volumes:
@@ -71,7 +71,7 @@ services:
       - 5003:443
     build:
       context: .
-      dockerfile: src/services/NotSoSimpleEcommerce.HealthChecker/Dockerfile
+      dockerfile: src/services/DevOpsProjectEcommerce.HealthChecker/Dockerfile
     env_file:
       - ./.env
     volumes:

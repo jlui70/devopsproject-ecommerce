@@ -12,11 +12,11 @@ export const useOrder = (): UseQueryResult<OrderEntity[]> =>
 
 export type OrderRequest = { productId: number; quantity: number };
 
-export const useCreateOrder = ({ onSuccess }: { onSuccess: () => void }) =>
+export const useCreateOrder = ({ onSuccess }: { onSuccess: (newOrder: OrderEntity) => void }) =>
   useMutation({
     mutationKey: ['createOrder'],
-    mutationFn: (body: OrderRequest) => http.post('/order/api/request', body),
-    onSuccess,
+    mutationFn: (body: OrderRequest) => http.post<OrderEntity>('/order/api/request', body),
+    onSuccess: (response) => onSuccess(response.data),
     onError: () => {},
   });
 

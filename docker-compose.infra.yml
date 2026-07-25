@@ -31,7 +31,7 @@ services:
 
   dpe.localstack.internal:
     container_name: dpe.localstack.internal
-    image: localstack/localstack
+    image: localstack/localstack:3.8
     ports:
       - 4566:4566
       - 4510-4559:4510-4559
@@ -58,5 +58,16 @@ services:
     environment:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=${POSTGRES_DB}
+    networks:
+      - dpe-network
+
+  dpe.mongodb.internal:
+    container_name: dpe.mongodb.internal
+    image: mongo:7.0
+    ports:
+      - 27017:27017
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=devopsprojectAdmin
+      - MONGO_INITDB_ROOT_PASSWORD=devopsprojectAdmin
     networks:
       - dpe-network
