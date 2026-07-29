@@ -51,9 +51,37 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push ${{ matrix.service.name }}
+        id: build
         run: |
           IMAGE="${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ github.sha }}"
           LATEST="${{ env.ECR_BASE }}/${{ matrix.service.name }}:latest"
           docker build -f ${{ matrix.service.dockerfile }} -t "$IMAGE" -t "$LATEST" .
           docker push "$IMAGE"
           docker push "$LATEST"
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
+          echo "digest=$DIGEST" >> $GITHUB_OUTPUT
+
+      - name: Scan ${{ matrix.service.name }} with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: '0'
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign ${{ matrix.service.name }} image
+        run: cosign sign --yes "${{ steps.build.outputs.digest }}"
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+
+      - name: Generate SBOM for ${{ matrix.service.name }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-${{ matrix.service.name }}-${{ github.sha }}
