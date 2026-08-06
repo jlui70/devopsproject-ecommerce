@@ -1,0 +1,9 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: devopsproject-ecommerce
+  description: E-commerce application (C#).
+spec:
+  type: service
+  lifecycle: experimental
+  owner: group:default/platform-admins
