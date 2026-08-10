@@ -1,8 +1,18 @@
 name: Deploy Backend
 
+# Canonical flow (ADR-0014 + ADR-0020):
+#   test (unit) -> build/push ECR sha-<git-sha> [staging role] -> commit overlay staging/
+#   -> ArgoCD syncs ns staging -> smoke test (curl /health per app)
+#   -> [GATE: GitHub Environment "production" - manual approval]
+#   -> re-tag ECR sha-* -> release-YYYYMMDD-<sha> [prod role, no rebuild]
+#   -> commit overlay production/ -> ArgoCD syncs ns dpe (producao)
+#
+# `develop` does not exist yet in this repo at the time of this pipeline rewrite; it is used
+# here as the primary trigger because it is the branch the github-staging-role trust policy
+# (ADR-0014, Decisao 2) is scoped to (`ref:refs/heads/develop`, `ref:refs/heads/feature/*`).
 on:
   push:
-    branches: [master]
+    branches: [develop, 'feature/**']
     paths:
       - 'src/services/**'
       - 'src/workers/**'
@@ -18,9 +28,38 @@ env:
   AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_BASE: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/devopsproject/prod
+  GITOPS_REPO: jlui70/devopsproject-ecommerce-gitops
+  IMAGE_TAG: sha-${{ github.sha }}
 
 jobs:
-  deploy:
+  # ---------------------------------------------------------------------------------------
+  # Gate 1 (ADR-0020, Decisao 2): unit tests block the pipeline before any image is built.
+  # Runs once for the whole solution - kept as its own job so the 6-way matrix build below
+  # never starts (and never spends ECR push quota) on a red test suite.
+  # ---------------------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 6
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: dotnet test
+        run: dotnet test DevOpsProjectEcommerce.sln --configuration Release
+
+  # ---------------------------------------------------------------------------------------
+  # Job de staging (ADR-0014, fluxo canonico) - build + push.
+  # Uses a matrix because the security steps (Trivy/Cosign/SBOM, ADR-0016) are marketplace
+  # actions and cannot be looped over inside a single bash step; the matrix is GitHub Actions'
+  # native fan-out for that. The `:latest` tag is gone - only the immutable `sha-<git-sha>`
+  # tag is published (ADR-0020, Decisao 3 makes this enforceable at the registry level once
+  # the ECR repos move to IMMUTABLE - tracked separately in the `server` Terraform stack).
+  # ---------------------------------------------------------------------------------------
+  build-and-push-staging:
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -41,10 +80,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (staging role)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.BACKEND_ROLE_ARN }}
+          # NEW/PENDING secret - devopsproject-github-staging-role ARN (ADR-0014, Decisao 2).
+          # Trust: sub=repo:jlui70/devopsproject-ecommerce:ref:refs/heads/{develop,feature/*}.
+          # Terraform for this role lives in terraform/site (out of scope of this checkout).
+          role-to-assume: ${{ secrets.STAGING_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to ECR
@@ -53,18 +95,16 @@ jobs:
       - name: Build and push ${{ matrix.service.name }}
         id: build
         run: |
-          IMAGE="${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ github.sha }}"
-          LATEST="${{ env.ECR_BASE }}/${{ matrix.service.name }}:latest"
-          docker build -f ${{ matrix.service.dockerfile }} -t "$IMAGE" -t "$LATEST" .
+          IMAGE="${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}"
+          docker build -f ${{ matrix.service.dockerfile }} -t "$IMAGE" .
           docker push "$IMAGE"
-          docker push "$LATEST"
           DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE")
           echo "digest=$DIGEST" >> $GITHUB_OUTPUT
 
       - name: Scan ${{ matrix.service.name }} with Trivy
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ github.sha }}
+          image-ref: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
           format: table
           severity: CRITICAL,HIGH
           exit-code: '0'
@@ -80,8 +120,151 @@ jobs:
       - name: Generate SBOM for ${{ matrix.service.name }}
         uses: anchore/sbom-action@v0
         with:
-          image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ github.sha }}
+          image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
           format: spdx-json
           output-file: sbom-${{ matrix.service.name }}.spdx.json
           upload-artifact: true
           artifact-name: sbom-${{ matrix.service.name }}-${{ github.sha }}
+
+  # ---------------------------------------------------------------------------------------
+  # Fan-in: after all 6 images are pushed, point the staging overlay at the new sha-* tag
+  # and let ArgoCD (pull-based) reconcile the `staging` namespace. Runs once, not per-service.
+  # ---------------------------------------------------------------------------------------
+  update-staging-gitops:
+    needs: build-and-push-staging
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          # NEW/PENDING secret - deploy token (fine-grained PAT or GitHub App installation
+          # token) scoped to push on devopsproject-ecommerce-gitops. Configuration pending,
+          # manual, outside this checkout.
+          token: ${{ secrets.GITOPS_DEPLOY_TOKEN }}
+          path: gitops
+
+      - name: Install yq
+        run: |
+          sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+
+      # staging/kustomization.yml is created by the ADR-0013 overlay work (out of scope of
+      # this ADR/checkout). This step assumes the same `images:` block shape already used by
+      # production/kustomization.yml today (name/newName/newTag per repo).
+      - name: Set staging image tags to ${{ env.IMAGE_TAG }}
+        working-directory: gitops
+        run: |
+          for service in main order identity-server health-checker notificator invoice-generator; do
+            yq -i "(.images[] | select(.name == \"${{ env.ECR_BASE }}/${service}\")).newTag = \"${{ env.IMAGE_TAG }}\"" staging/kustomization.yml
+          done
+
+      - name: Commit and push staging overlay
+        working-directory: gitops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add staging/kustomization.yml
+          git commit -m "deploy(staging): ${{ env.IMAGE_TAG }}" || echo "No changes to commit"
+          git push
+
+  # ---------------------------------------------------------------------------------------
+  # Job de smoke test (ADR-0014, Decisao 5) - gate to open before the production approval.
+  # Health paths follow the real Ingress prefix + the per-app `app.Map("/<prefix>", ...)`
+  # wrapper (confirmed in each service's Program.cs): /<prefix>/health, not just /<prefix>.
+  # kubectl wait via SSM tunnel (Decisao 4) is optional and can be added later - the HTTP
+  # check alone already covers "the release comes up and responds" for this lab's scope.
+  # ---------------------------------------------------------------------------------------
+  smoke-test-staging:
+    needs: update-staging-gitops
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for ArgoCD sync
+        run: sleep 30 # TODO: replace with a real ArgoCD sync-status poll or the optional kubectl wait (SSM tunnel) once available
+
+      - name: curl /health on every service (staging)
+        run: |
+          set -e
+          BASE_URL="https://staging.ecommerce-devopsproject.com"
+          for path in main/health order/health identity/health invoice/health notificator/health healthchecks/health; do
+            echo "Checking ${BASE_URL}/${path}"
+            curl -f --max-time 10 "${BASE_URL}/${path}"
+          done
+
+      # Optional, not executed by default (kept as documentation of the mechanism from
+      # ADR-0014, Decisao 4 - Opcao C): open an SSM port-forward tunnel to the control plane
+      # and run `kubectl wait --for=condition=ready pod -n staging` with a short-lived SA
+      # token. Left out of the default path because the deploy is pull-based (ArgoCD) and the
+      # HTTP check above already gates the promotion; add this step if a stronger readiness
+      # signal than /health is ever needed.
+
+  # ---------------------------------------------------------------------------------------
+  # Job de promocao (ADR-0014, Decisao 1 + 6) - the GitHub Environment "production" pauses
+  # this job for manual approval (required reviewers) before anything below runs. No
+  # `docker build` here: only re-tag of the digest already validated in staging, so
+  # production runs byte-for-byte the same image as staging (artifact parity contract,
+  # ADR-0013 / ADR-0020).
+  # ---------------------------------------------------------------------------------------
+  promote-production:
+    needs: smoke-test-staging
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure AWS credentials (production role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # NEW/PENDING secret - devopsproject-github-prod-role ARN (ADR-0014, Decisao 2).
+          # Trust: sub=repo:jlui70/devopsproject-ecommerce:environment:production (StringEquals)
+          # - only assumable by a job bound to this GitHub Environment, i.e. after approval.
+          role-to-assume: ${{ secrets.PROD_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Compute release tag
+        id: release
+        run: |
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          echo "tag=release-$(date +%Y%m%d)-${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Re-tag sha-* to ${{ steps.release.outputs.tag }} on the 6 ECR repos
+        run: |
+          set -e
+          for service in main order identity-server health-checker notificator invoice-generator; do
+            REPO="devopsproject/prod/${service}"
+            echo "Re-tagging ${REPO}:${{ env.IMAGE_TAG }} -> ${REPO}:${{ steps.release.outputs.tag }}"
+            MANIFEST=$(aws ecr batch-get-image \
+              --repository-name "$REPO" \
+              --image-ids imageTag="${{ env.IMAGE_TAG }}" \
+              --query 'images[0].imageManifest' --output text)
+            aws ecr put-image \
+              --repository-name "$REPO" \
+              --image-tag "${{ steps.release.outputs.tag }}" \
+              --image-manifest "$MANIFEST"
+          done
+
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GITOPS_REPO }}
+          token: ${{ secrets.GITOPS_DEPLOY_TOKEN }} # NEW/PENDING secret - see update-staging-gitops job
+          path: gitops
+
+      - name: Install yq
+        run: |
+          sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Set production image tags to ${{ steps.release.outputs.tag }}
+        working-directory: gitops
+        run: |
+          for service in main order identity-server health-checker notificator invoice-generator; do
+            yq -i "(.images[] | select(.name == \"${{ env.ECR_BASE }}/${service}\")).newTag = \"${{ steps.release.outputs.tag }}\"" production/kustomization.yml
+          done
+
+      - name: Commit and push production overlay
+        working-directory: gitops
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add production/kustomization.yml
+          git commit -m "deploy(production): ${{ steps.release.outputs.tag }}" || echo "No changes to commit"
+          git push

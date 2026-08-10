@@ -1,11 +1,22 @@
 #!/usr/bin/env bash
 # Build e push de todas as imagens .NET para o ECR.
 # Executar a partir da raiz de devopsproject-ecommerce/.
+#
+# ADR-0020: os repositorios ECR sao IMMUTABLE (image_tag_mutability = "IMMUTABLE") -
+# nenhuma tag pode ser sobrescrita depois de publicada, nem mesmo ":latest". Por isso
+# este script NUNCA usa ":latest" como tag - o default e uma tag unica derivada de
+# data/hora, e o script nao publica mais nenhuma tag secundaria fixa. Rodar o script
+# de novo (ex.: apos corrigir um bug durante o bootstrap) simplesmente gera uma nova
+# tag unica, sem colidir com nenhuma tag ja existente no ECR.
+#
+# Uso:
+#   ./build-push-ecr.sh                 # tag automatica: bootstrap-YYYYMMDDHHMMSS
+#   ./build-push-ecr.sh minha-tag-unica # tag explicita (deve ser unica - nunca reusar)
 set -euo pipefail
 
 ACCOUNT_ID="692430448478"
 REGION="us-east-1"
-TAG="${1:-latest}"
+TAG="${1:-bootstrap-$(date +%Y%m%d%H%M%S)}"
 ECR_BASE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/devopsproject/prod"
 CONTEXT="$(cd "$(dirname "$0")" && pwd)"
 
@@ -35,14 +46,9 @@ for SVC in "${!SERVICES[@]}"; do
 
   echo "==> [$SVC] Push: $URI"
   docker push "$URI"
-
-  if [ "$TAG" != "latest" ]; then
-    LATEST_URI="${ECR_BASE}/${SVC}:latest"
-    docker tag  "$URI" "$LATEST_URI"
-    docker push "$LATEST_URI"
-    echo "==> [$SVC] Push (latest): $LATEST_URI"
-  fi
 done
 
 echo ""
 echo "==> Concluído. Imagens disponíveis no ECR com tag: ${TAG}"
+echo "==> Próximo passo: atualizar production/kustomization.yml (bloco images:) para"
+echo "    newTag: ${TAG} nos 6 serviços, commitar e dar push no repo GitOps."
