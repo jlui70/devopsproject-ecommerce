@@ -151,12 +151,3 @@ finally
 {
     Log.CloseAndFlush();
 }
-// trigger: primeiro run da pipeline
-// retry: novo sha para evitar colisao de tag imutavel no ECR
-// retry 2: novo sha apos falha transitoria no download do cosign
-// retry 3: policy IAM corrigida (ecr:BatchGetImage para cosign sign)
-// retry 4: nova tentativa apos falha HTTP transitoria no download do cosign
-// retry 5: nova tentativa - instabilidade recorrente do cosign-installer
-// retry 6: policy IAM corrigida (ec2:DescribeInstances + elbv2:DescribeLoadBalancers para o tunel SSM)
-// retry 7: staging saudavel - pull secret criado + senha do Aurora staging corrigida
-// retry 9: continuando apos instabilidade severa e persistente do cosign hoje
