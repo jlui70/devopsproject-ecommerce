@@ -152,3 +152,4 @@ finally
     Log.CloseAndFlush();
 }
 // trigger: primeiro run da pipeline
+// retry: novo sha para evitar colisao de tag imutavel no ECR
