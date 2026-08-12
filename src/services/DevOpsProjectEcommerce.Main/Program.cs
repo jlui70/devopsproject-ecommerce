@@ -158,3 +158,4 @@ finally
 // retry 4: nova tentativa apos falha HTTP transitoria no download do cosign
 // retry 5: nova tentativa - instabilidade recorrente do cosign-installer
 // retry 6: policy IAM corrigida (ec2:DescribeInstances + elbv2:DescribeLoadBalancers para o tunel SSM)
+// retry 7: staging saudavel - pull secret criado + senha do Aurora staging corrigida
