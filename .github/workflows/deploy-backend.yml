@@ -119,11 +119,22 @@ jobs:
         continue-on-error: true
         uses: sigstore/cosign-installer@v3
 
+      # As 3 tentativas rodando back-to-back (sem espera) falhavam juntas em <1s cada -
+      # achado ao vivo em 2026-08-12: nao da tempo nenhum pra instabilidade transitoria
+      # da CDN se resolver. Espera de 15s entre tentativas.
+      - name: Esperar antes da tentativa 2 do Cosign
+        if: steps.cosign1.outcome == 'failure'
+        run: sleep 15
+
       - name: Install Cosign (tentativa 2)
         id: cosign2
         if: steps.cosign1.outcome == 'failure'
         continue-on-error: true
         uses: sigstore/cosign-installer@v3
+
+      - name: Esperar antes da tentativa 3 do Cosign
+        if: steps.cosign1.outcome == 'failure' && steps.cosign2.outcome == 'failure'
+        run: sleep 30
 
       - name: Install Cosign (tentativa 3)
         if: steps.cosign1.outcome == 'failure' && steps.cosign2.outcome == 'failure'
@@ -148,6 +159,10 @@ jobs:
           upload-artifact: true
           artifact-name: sbom-${{ matrix.service.name }}-${{ github.sha }}
 
+      - name: Esperar antes da tentativa 2 do SBOM
+        if: steps.sbom1.outcome == 'failure'
+        run: sleep 15
+
       - name: Generate SBOM for ${{ matrix.service.name }} (tentativa 2)
         id: sbom2
         if: steps.sbom1.outcome == 'failure'
@@ -159,6 +174,10 @@ jobs:
           output-file: sbom-${{ matrix.service.name }}.spdx.json
           upload-artifact: true
           artifact-name: sbom-${{ matrix.service.name }}-${{ github.sha }}
+
+      - name: Esperar antes da tentativa 3 do SBOM
+        if: steps.sbom1.outcome == 'failure' && steps.sbom2.outcome == 'failure'
+        run: sleep 30
 
       - name: Generate SBOM for ${{ matrix.service.name }} (tentativa 3)
         if: steps.sbom1.outcome == 'failure' && steps.sbom2.outcome == 'failure'
