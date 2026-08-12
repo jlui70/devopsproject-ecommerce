@@ -156,3 +156,4 @@ finally
 // retry 2: novo sha apos falha transitoria no download do cosign
 // retry 3: policy IAM corrigida (ecr:BatchGetImage para cosign sign)
 // retry 4: nova tentativa apos falha HTTP transitoria no download do cosign
+// retry 5: nova tentativa - instabilidade recorrente do cosign-installer
