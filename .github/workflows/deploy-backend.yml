@@ -109,7 +109,35 @@ jobs:
           severity: CRITICAL,HIGH
           exit-code: '0'
 
-      - name: Install Cosign
+      # A CDN de releases do GitHub anda instavel (achado ao vivo no deploy do zero de
+      # 2026-08-12) - o download do binario do cosign feito pela action falha de forma
+      # intermitente (varios exit codes diferentes: 22, 56). Retry nativo em 3 tentativas
+      # em vez de trocar por um download manual sem verificacao de assinatura (manteria a
+      # action oficial e a cadeia de verificacao, so absorve a instabilidade transitoria).
+      - name: Install Cosign (tentativa 1)
+        id: cosign1
+        continue-on-error: true
+        uses: sigstore/cosign-installer@v3
+
+      # As 3 tentativas rodando back-to-back (sem espera) falhavam juntas em <1s cada -
+      # achado ao vivo em 2026-08-12: nao da tempo nenhum pra instabilidade transitoria
+      # da CDN se resolver. Espera de 15s entre tentativas.
+      - name: Esperar antes da tentativa 2 do Cosign
+        if: steps.cosign1.outcome == 'failure'
+        run: sleep 15
+
+      - name: Install Cosign (tentativa 2)
+        id: cosign2
+        if: steps.cosign1.outcome == 'failure'
+        continue-on-error: true
+        uses: sigstore/cosign-installer@v3
+
+      - name: Esperar antes da tentativa 3 do Cosign
+        if: steps.cosign1.outcome == 'failure' && steps.cosign2.outcome == 'failure'
+        run: sleep 30
+
+      - name: Install Cosign (tentativa 3)
+        if: steps.cosign1.outcome == 'failure' && steps.cosign2.outcome == 'failure'
         uses: sigstore/cosign-installer@v3
 
       - name: Sign ${{ matrix.service.name }} image
@@ -117,7 +145,42 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "1"
 
-      - name: Generate SBOM for ${{ matrix.service.name }}
+      # Mesma instabilidade da CDN de releases do GitHub (achado ao vivo em 2026-08-12) -
+      # o instalador do syft, usado por esta action, falha de forma intermitente. Retry
+      # nativo em 3 tentativas, mesmo padrao do "Install Cosign" acima.
+      - name: Generate SBOM for ${{ matrix.service.name }} (tentativa 1)
+        id: sbom1
+        continue-on-error: true
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-${{ matrix.service.name }}-${{ github.sha }}
+
+      - name: Esperar antes da tentativa 2 do SBOM
+        if: steps.sbom1.outcome == 'failure'
+        run: sleep 15
+
+      - name: Generate SBOM for ${{ matrix.service.name }} (tentativa 2)
+        id: sbom2
+        if: steps.sbom1.outcome == 'failure'
+        continue-on-error: true
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-${{ matrix.service.name }}-${{ github.sha }}
+
+      - name: Esperar antes da tentativa 3 do SBOM
+        if: steps.sbom1.outcome == 'failure' && steps.sbom2.outcome == 'failure'
+        run: sleep 30
+
+      - name: Generate SBOM for ${{ matrix.service.name }} (tentativa 3)
+        if: steps.sbom1.outcome == 'failure' && steps.sbom2.outcome == 'failure'
         uses: anchore/sbom-action@v0
         with:
           image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
@@ -144,10 +207,18 @@ jobs:
           token: ${{ secrets.GITOPS_DEPLOY_TOKEN }}
           path: gitops
 
+      # Retry (achado ao vivo no deploy do zero de 2026-08-12): a CDN de releases do
+      # GitHub andou instavel o dia inteiro nesta run - varios downloads de binarios de
+      # terceiros (Trivy, Cosign, yq) falhando de forma intermitente em passos distintos.
       - name: Install yq
         run: |
-          sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          for i in 1 2 3 4 5; do
+            sudo wget -q --timeout=20 --tries=1 https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && break
+            echo "Download falhou (tentativa $i/5), aguardando..."
+            sleep $((i * 5))
+          done
           sudo chmod +x /usr/local/bin/yq
+          yq --version
 
       # staging/kustomization.yml is created by the ADR-0013 overlay work (out of scope of
       # this ADR/checkout). This step assumes the same `images:` block shape already used by
@@ -172,31 +243,98 @@ jobs:
   # Job de smoke test (ADR-0014, Decisao 5) - gate to open before the production approval.
   # Health paths follow the real Ingress prefix + the per-app `app.Map("/<prefix>", ...)`
   # wrapper (confirmed in each service's Program.cs): /<prefix>/health, not just /<prefix>.
-  # kubectl wait via SSM tunnel (Decisao 4) is optional and can be added later - the HTTP
-  # check alone already covers "the release comes up and responds" for this lab's scope.
+  #
+  # CORRIGIDO (achado ao vivo no deploy do zero de 2026-08-12): staging/ingress.yml usa
+  # `alb.ingress.kubernetes.io/scheme: internal` (ADR-0011, decisao do board de nao expor
+  # staging publicamente) - o ALB nao tem rota nenhuma a partir da internet publica, entao
+  # um curl direto deste runner (hospedado fora da VPC) trava ate estourar o timeout,
+  # sempre, deterministicamente - nao e flakiness, e um erro de alcancabilidade estrutural.
+  # A propria github-staging-role ja tinha a permissao ssm:StartSession pro control-plane
+  # provisionada pra isso exatamente (iam.github-staging-role.tf, statement
+  # SSMTunnelControlPlane) - so faltava este job de fato abrir o tunel antes do curl.
   # ---------------------------------------------------------------------------------------
   smoke-test-staging:
     needs: update-staging-gitops
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - name: Wait for ArgoCD sync
-        run: sleep 30 # TODO: replace with a real ArgoCD sync-status poll or the optional kubectl wait (SSM tunnel) once available
+        run: sleep 30 # TODO: replace with a real ArgoCD sync-status poll once available
 
-      - name: curl /health on every service (staging)
+      - name: Configure AWS credentials (staging role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.STAGING_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Install Session Manager plugin
+        run: |
+          curl -sL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o session-manager-plugin.deb
+          sudo dpkg -i session-manager-plugin.deb
+
+      - name: Open SSM tunnel to internal staging ALB via control plane
         run: |
           set -e
-          BASE_URL="https://staging.ecommerce-devopsproject.com"
+          CONTROL_PLANE_ID=$(aws ec2 describe-instances \
+            --filters "Name=tag:Role,Values=control-plane" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" --output text)
+
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names dpe-stg-ingress-stg \
+            --query 'LoadBalancers[0].DNSName' --output text)
+
+          nohup aws ssm start-session \
+            --target "$CONTROL_PLANE_ID" \
+            --document-name AWS-StartPortForwardingSessionToRemoteHost \
+            --parameters "{\"host\":[\"$ALB_DNS\"],\"portNumber\":[\"443\"],\"localPortNumber\":[\"8443\"]}" \
+            > ssm-tunnel.log 2>&1 &
+          echo $! > ssm-tunnel.pid
+
+          # "Waiting for connections..." e a mensagem que o proprio aws ssm start-session
+          # imprime quando o encaminhamento de porta esta de fato pronto - checar so a
+          # porta local aberta (achado ao vivo em 2026-08-12) da falso-positivo: o socket
+          # local pode abrir antes do lado remoto (control plane -> ALB) estar pronto,
+          # e o curl seguinte recebe "Couldn't connect... after 0 ms" (conexao recusada
+          # instantaneamente, nao timeout).
+          for i in $(seq 1 30); do
+            grep -q "Waiting for connections" ssm-tunnel.log 2>/dev/null && break
+            sleep 1
+          done
+          sleep 2  # margem extra apos a mensagem de pronto
+          cat ssm-tunnel.log
+
+          # Sem isso, uma falha no "aws ssm start-session" em background (ex.:
+          # AccessDenied) nao derruba este step - o ultimo comando do script era o
+          # "cat" acima, que sempre sai com sucesso mesmo com o tunel nunca tendo
+          # aberto de verdade (achado ao vivo em 2026-08-12).
+          grep -q "Waiting for connections" ssm-tunnel.log || {
+            echo "::error::Tunel SSM nao abriu - ver ssm-tunnel.log acima"
+            exit 1
+          }
+
+      - name: curl /health on every service (staging, via SSM tunnel)
+        run: |
+          set -e
+          # --resolve mapeia o hostname real pro tunel local sem desabilitar a validacao
+          # de TLS - o SNI/Host continuam "staging.ecommerce-devopsproject.com", batendo
+          # com o certificado ACM do ALB.
           for path in main/health order/health identity/health invoice/health notificator/health healthchecks/health; do
-            echo "Checking ${BASE_URL}/${path}"
-            curl -f --max-time 10 "${BASE_URL}/${path}"
+            echo "Checking https://staging.ecommerce-devopsproject.com/${path} (via tunnel)"
+            for i in 1 2 3; do
+              curl -f --max-time 10 \
+                --resolve staging.ecommerce-devopsproject.com:8443:127.0.0.1 \
+                "https://staging.ecommerce-devopsproject.com:8443/${path}" && break
+              echo "Tentativa $i falhou, aguardando..."
+              sleep 3
+              [ "$i" -eq 3 ] && exit 1
+            done
           done
 
-      # Optional, not executed by default (kept as documentation of the mechanism from
-      # ADR-0014, Decisao 4 - Opcao C): open an SSM port-forward tunnel to the control plane
-      # and run `kubectl wait --for=condition=ready pod -n staging` with a short-lived SA
-      # token. Left out of the default path because the deploy is pull-based (ArgoCD) and the
-      # HTTP check above already gates the promotion; add this step if a stronger readiness
-      # signal than /health is ever needed.
+      - name: Close SSM tunnel
+        if: always()
+        run: kill "$(cat ssm-tunnel.pid)" 2>/dev/null || true
 
   # ---------------------------------------------------------------------------------------
   # Job de promocao (ADR-0014, Decisao 1 + 6) - the GitHub Environment "production" pauses
@@ -248,10 +386,18 @@ jobs:
           token: ${{ secrets.GITOPS_DEPLOY_TOKEN }} # NEW/PENDING secret - see update-staging-gitops job
           path: gitops
 
+      # Retry (achado ao vivo no deploy do zero de 2026-08-12): a CDN de releases do
+      # GitHub andou instavel o dia inteiro nesta run - varios downloads de binarios de
+      # terceiros (Trivy, Cosign, yq) falhando de forma intermitente em passos distintos.
       - name: Install yq
         run: |
-          sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          for i in 1 2 3 4 5; do
+            sudo wget -q --timeout=20 --tries=1 https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && break
+            echo "Download falhou (tentativa $i/5), aguardando..."
+            sleep $((i * 5))
+          done
           sudo chmod +x /usr/local/bin/yq
+          yq --version
 
       - name: Set production image tags to ${{ steps.release.outputs.tag }}
         working-directory: gitops
