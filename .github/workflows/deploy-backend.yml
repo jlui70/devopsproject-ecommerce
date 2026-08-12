@@ -161,10 +161,18 @@ jobs:
           token: ${{ secrets.GITOPS_DEPLOY_TOKEN }}
           path: gitops
 
+      # Retry (achado ao vivo no deploy do zero de 2026-08-12): a CDN de releases do
+      # GitHub andou instavel o dia inteiro nesta run - varios downloads de binarios de
+      # terceiros (Trivy, Cosign, yq) falhando de forma intermitente em passos distintos.
       - name: Install yq
         run: |
-          sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          for i in 1 2 3 4 5; do
+            sudo wget -q --timeout=20 --tries=1 https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && break
+            echo "Download falhou (tentativa $i/5), aguardando..."
+            sleep $((i * 5))
+          done
           sudo chmod +x /usr/local/bin/yq
+          yq --version
 
       # staging/kustomization.yml is created by the ADR-0013 overlay work (out of scope of
       # this ADR/checkout). This step assumes the same `images:` block shape already used by
@@ -310,10 +318,18 @@ jobs:
           token: ${{ secrets.GITOPS_DEPLOY_TOKEN }} # NEW/PENDING secret - see update-staging-gitops job
           path: gitops
 
+      # Retry (achado ao vivo no deploy do zero de 2026-08-12): a CDN de releases do
+      # GitHub andou instavel o dia inteiro nesta run - varios downloads de binarios de
+      # terceiros (Trivy, Cosign, yq) falhando de forma intermitente em passos distintos.
       - name: Install yq
         run: |
-          sudo wget -q https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq
+          for i in 1 2 3 4 5; do
+            sudo wget -q --timeout=20 --tries=1 https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/local/bin/yq && break
+            echo "Download falhou (tentativa $i/5), aguardando..."
+            sleep $((i * 5))
+          done
           sudo chmod +x /usr/local/bin/yq
+          yq --version
 
       - name: Set production image tags to ${{ steps.release.outputs.tag }}
         working-directory: gitops
