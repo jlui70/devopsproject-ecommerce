@@ -134,7 +134,34 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "1"
 
-      - name: Generate SBOM for ${{ matrix.service.name }}
+      # Mesma instabilidade da CDN de releases do GitHub (achado ao vivo em 2026-08-12) -
+      # o instalador do syft, usado por esta action, falha de forma intermitente. Retry
+      # nativo em 3 tentativas, mesmo padrao do "Install Cosign" acima.
+      - name: Generate SBOM for ${{ matrix.service.name }} (tentativa 1)
+        id: sbom1
+        continue-on-error: true
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-${{ matrix.service.name }}-${{ github.sha }}
+
+      - name: Generate SBOM for ${{ matrix.service.name }} (tentativa 2)
+        id: sbom2
+        if: steps.sbom1.outcome == 'failure'
+        continue-on-error: true
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.service.name }}.spdx.json
+          upload-artifact: true
+          artifact-name: sbom-${{ matrix.service.name }}-${{ github.sha }}
+
+      - name: Generate SBOM for ${{ matrix.service.name }} (tentativa 3)
+        if: steps.sbom1.outcome == 'failure' && steps.sbom2.outcome == 'failure'
         uses: anchore/sbom-action@v0
         with:
           image: ${{ env.ECR_BASE }}/${{ matrix.service.name }}:${{ env.IMAGE_TAG }}
