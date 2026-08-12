@@ -154,3 +154,4 @@ finally
 // trigger: primeiro run da pipeline
 // retry: novo sha para evitar colisao de tag imutavel no ECR
 // retry 2: novo sha apos falha transitoria no download do cosign
+// retry 3: policy IAM corrigida (ecr:BatchGetImage para cosign sign)
