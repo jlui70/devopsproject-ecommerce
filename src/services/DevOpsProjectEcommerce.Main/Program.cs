@@ -153,3 +153,4 @@ finally
 }
 // trigger: primeiro run da pipeline
 // retry: novo sha para evitar colisao de tag imutavel no ECR
+// retry 2: novo sha apos falha transitoria no download do cosign
