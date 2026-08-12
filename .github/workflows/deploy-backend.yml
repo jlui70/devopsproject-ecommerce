@@ -286,6 +286,15 @@ jobs:
           sleep 2  # margem extra apos a mensagem de pronto
           cat ssm-tunnel.log
 
+          # Sem isso, uma falha no "aws ssm start-session" em background (ex.:
+          # AccessDenied) nao derruba este step - o ultimo comando do script era o
+          # "cat" acima, que sempre sai com sucesso mesmo com o tunel nunca tendo
+          # aberto de verdade (achado ao vivo em 2026-08-12).
+          grep -q "Waiting for connections" ssm-tunnel.log || {
+            echo "::error::Tunel SSM nao abriu - ver ssm-tunnel.log acima"
+            exit 1
+          }
+
       - name: curl /health on every service (staging, via SSM tunnel)
         run: |
           set -e
