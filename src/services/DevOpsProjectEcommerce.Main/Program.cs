@@ -151,3 +151,4 @@ finally
 {
     Log.CloseAndFlush();
 }
+// trigger: primeiro run da pipeline
