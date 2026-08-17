@@ -92,6 +92,9 @@ jobs:
   # promote-production job (ADR-0014, Decisao 1).
   deploy-production:
     needs: deploy-staging
+    # ADR-0021: mesma guarda do job promote-production em deploy-backend.yml - so
+    # promove a partir de um commit ja mergeado na develop.
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     environment: production
     steps:

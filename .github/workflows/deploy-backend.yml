@@ -345,6 +345,10 @@ jobs:
   # ---------------------------------------------------------------------------------------
   promote-production:
     needs: smoke-test-staging
+    # ADR-0021: promocao so pode originar de um commit ja mergeado na develop (passou
+    # pelo gate de PR revisado do ADR-0014) - fecha a lacuna em que uma branch feature/*
+    # chegava ate a aprovacao do Environment "production" sem revisao de codigo.
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     environment: production
     steps:
