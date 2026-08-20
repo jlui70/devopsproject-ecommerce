@@ -51,3 +51,4 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     </QueryClientProvider>
   </React.StrictMode>
 );
+// trigger: primeiro run da pipeline
