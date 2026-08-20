@@ -153,3 +153,4 @@ finally
 }
 // trigger: primeiro run da pipeline
 // trigger: primeiro run da pipeline
+// trigger: primeiro run da pipeline
