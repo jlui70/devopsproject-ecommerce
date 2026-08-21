@@ -19,6 +19,25 @@ on:
       - 'src/domains/**'
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
+    # ADR-0023 — modo bootstrap do Estagio 3 do RUNBOOK.
+    #
+    # No deploy do zero, as imagens precisam existir no ECR antes do Ansible rodar
+    # (o ArgoCD sincroniza no fim do playbook e os pods precisam da imagem). Ate o
+    # ADR-0023 isso era feito por `build-push-ecr.sh` rodando na maquina do operador,
+    # seguido de edicao manual do `newTag` nos dois kustomization.yml — ou seja, a
+    # primeira imagem a chegar em producao nunca passava pelo pipeline.
+    #
+    # Com bootstrap=true, o proprio pipeline constroi, publica e escreve as tags nos
+    # DOIS overlays (producao e staging), e pula os dois jobs que ainda nao teriam
+    # como funcionar nesse ponto do processo: o smoke test (o ALB de staging so'
+    # existe depois do Estagio 4) e a promocao (nao ha o que promover — a mesma tag
+    # ja foi escrita nos dois overlays).
+    inputs:
+      bootstrap:
+        description: 'Bootstrap do deploy do zero: publica as imagens e escreve as tags nos overlays de producao E staging, pulando smoke test e promocao (Estagio 3 do RUNBOOK).'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   id-token: write
@@ -30,6 +49,8 @@ env:
   ECR_BASE: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/devopsproject/prod
   GITOPS_REPO: jlui70/devopsproject-ecommerce-gitops
   IMAGE_TAG: sha-${{ github.sha }}
+  # 'true' apenas quando disparado manualmente com o input marcado.
+  BOOTSTRAP: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && 'true' || 'false' }}
 
 jobs:
   # ---------------------------------------------------------------------------------------
@@ -230,13 +251,30 @@ jobs:
             yq -i "(.images[] | select(.name == \"${{ env.ECR_BASE }}/${service}\")).newTag = \"${{ env.IMAGE_TAG }}\"" staging/kustomization.yml
           done
 
+      # ADR-0023 (bootstrap): no Estagio 3 nao ha promocao para escrever o overlay de
+      # producao — o cluster ainda nem existe. A mesma tag recem publicada e' escrita
+      # nos dois overlays aqui, que e' o que o `sed`/`yq` manual do runbook antigo fazia.
+      - name: Set production image tags to ${{ env.IMAGE_TAG }} (bootstrap)
+        if: env.BOOTSTRAP == 'true'
+        working-directory: gitops
+        run: |
+          for service in main order identity-server health-checker notificator invoice-generator; do
+            yq -i "(.images[] | select(.name == \"${{ env.ECR_BASE }}/${service}\")).newTag = \"${{ env.IMAGE_TAG }}\"" production/kustomization.yml
+          done
+          yq '.images' production/kustomization.yml
+
       - name: Commit and push staging overlay
         working-directory: gitops
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add staging/kustomization.yml
-          git commit -m "deploy(staging): ${{ env.IMAGE_TAG }}" || echo "No changes to commit"
+          if [ "${{ env.BOOTSTRAP }}" = "true" ]; then
+            git add production/kustomization.yml
+            git commit -m "deploy(bootstrap): ${{ env.IMAGE_TAG }} em producao e staging" || echo "No changes to commit"
+          else
+            git commit -m "deploy(staging): ${{ env.IMAGE_TAG }}" || echo "No changes to commit"
+          fi
           git push
 
   # ---------------------------------------------------------------------------------------
@@ -255,6 +293,9 @@ jobs:
   # ---------------------------------------------------------------------------------------
   smoke-test-staging:
     needs: update-staging-gitops
+    # ADR-0023: no bootstrap (Estagio 3) o cluster ainda nao existe — o ALB interno
+    # de staging (`dpe-stg-ingress-stg`) so' aparece no Estagio 4, depois do Ansible.
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.bootstrap) }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -348,7 +389,9 @@ jobs:
     # ADR-0021: promocao so pode originar de um commit ja mergeado na develop (passou
     # pelo gate de PR revisado do ADR-0014) - fecha a lacuna em que uma branch feature/*
     # chegava ate a aprovacao do Environment "production" sem revisao de codigo.
-    if: github.ref == 'refs/heads/develop'
+    # ADR-0021 (gate de branch) + ADR-0023 (bootstrap nao promove: a tag ja foi
+    # escrita nos dois overlays pelo job update-staging-gitops).
+    if: ${{ github.ref == 'refs/heads/develop' && !(github.event_name == 'workflow_dispatch' && inputs.bootstrap) }}
     runs-on: ubuntu-latest
     environment: production
     steps:

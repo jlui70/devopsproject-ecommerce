@@ -79,13 +79,32 @@ jobs:
           aws s3 cp dist/index.html s3://app-staging.ecommerce-devopsproject.com/index.html \
             --cache-control "no-cache,no-store,must-revalidate"
 
+      # ADR-0023 — o distribution ID e' resolvido em runtime pelo alias, em vez de
+      # vir de um secret preenchido a mao. Motivo: o ID so' existe depois do apply da
+      # stack `site` (Estagio 5), o que obrigava a voltar na configuracao do repositorio
+      # no fim do processo; e ele muda a cada teardown+rebuild, entao o secret ficava
+      # silenciosamente desatualizado (invalidacao apontando para uma distribuicao que
+      # nao existe mais). Requer cloudfront:ListDistributions na role — concedida em
+      # terraform/site/iam.github-frontend-staging-role.tf.
+      - name: Resolve CloudFront distribution ID (staging)
+        id: cloudfront
+        run: |
+          set -euo pipefail
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Aliases.Items, 'app-staging.ecommerce-devopsproject.com')].Id | [0]" \
+            --output text)
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
+            echo "::error::Nenhuma distribuicao CloudFront com o alias app-staging.ecommerce-devopsproject.com. A stack `site` foi aplicada (Estagio 5)?"
+            exit 1
+          fi
+          echo "distribution-id=$DIST_ID" >> "$GITHUB_OUTPUT"
+          echo "Distribuicao resolvida: $DIST_ID"
+
       - name: Invalidate CloudFront (staging)
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.FRONTEND_STAGING_CLOUDFRONT_DISTRIBUTION_ID }} \
+            --distribution-id ${{ steps.cloudfront.outputs.distribution-id }} \
             --paths "/*"
-        # PENDING secret (repo config, not Terraform) - value is the
-        # frontend_staging_cloudfront_distribution_id output from terraform/site.
 
   # GitHub Environment "production" pauses this job for manual approval (required reviewers)
   # before anything below runs - the same gate mechanism as deploy-backend.yml's
@@ -122,8 +141,29 @@ jobs:
           aws s3 cp dist/index.html s3://ecommerce-devopsproject.com/index.html \
             --cache-control "no-cache,no-store,must-revalidate"
 
+      # ADR-0023 — o distribution ID e' resolvido em runtime pelo alias, em vez de
+      # vir de um secret preenchido a mao. Motivo: o ID so' existe depois do apply da
+      # stack `site` (Estagio 5), o que obrigava a voltar na configuracao do repositorio
+      # no fim do processo; e ele muda a cada teardown+rebuild, entao o secret ficava
+      # silenciosamente desatualizado (invalidacao apontando para uma distribuicao que
+      # nao existe mais). Requer cloudfront:ListDistributions na role — concedida em
+      # terraform/site/iam.github-frontend-role.tf.
+      - name: Resolve CloudFront distribution ID (producao)
+        id: cloudfront
+        run: |
+          set -euo pipefail
+          DIST_ID=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?contains(Aliases.Items, 'ecommerce-devopsproject.com')].Id | [0]" \
+            --output text)
+          if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
+            echo "::error::Nenhuma distribuicao CloudFront com o alias ecommerce-devopsproject.com. A stack `site` foi aplicada (Estagio 5)?"
+            exit 1
+          fi
+          echo "distribution-id=$DIST_ID" >> "$GITHUB_OUTPUT"
+          echo "Distribuicao resolvida: $DIST_ID"
+
       - name: Invalidate CloudFront (production)
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --distribution-id ${{ steps.cloudfront.outputs.distribution-id }} \
             --paths "/*"
