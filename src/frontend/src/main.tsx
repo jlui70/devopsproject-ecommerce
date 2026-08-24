@@ -52,3 +52,4 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   </React.StrictMode>
 );
 // trigger: primeiro run da pipeline
+// trigger: demo Teste 0
