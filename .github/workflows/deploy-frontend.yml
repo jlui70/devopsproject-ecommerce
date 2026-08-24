@@ -91,7 +91,7 @@ jobs:
         run: |
           set -euo pipefail
           DIST_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?contains(Aliases.Items, 'app-staging.ecommerce-devopsproject.com')].Id | [0]" \
+            --query "DistributionList.Items[?contains(not_null(Aliases.Items, ['']), 'app-staging.ecommerce-devopsproject.com')].Id | [0]" \
             --output text)
           if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
             echo "::error::Nenhuma distribuicao CloudFront com o alias app-staging.ecommerce-devopsproject.com. A stack `site` foi aplicada (Estagio 5)?"
@@ -153,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           DIST_ID=$(aws cloudfront list-distributions \
-            --query "DistributionList.Items[?contains(Aliases.Items, 'ecommerce-devopsproject.com')].Id | [0]" \
+            --query "DistributionList.Items[?contains(not_null(Aliases.Items, ['']), 'ecommerce-devopsproject.com')].Id | [0]" \
             --output text)
           if [ -z "$DIST_ID" ] || [ "$DIST_ID" = "None" ]; then
             echo "::error::Nenhuma distribuicao CloudFront com o alias ecommerce-devopsproject.com. A stack `site` foi aplicada (Estagio 5)?"
