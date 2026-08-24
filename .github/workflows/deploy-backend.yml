@@ -68,8 +68,19 @@ jobs:
         with:
           dotnet-version: '6.0.x'
 
+      # Achado ao vivo em 2026-08-24 (Apendice A.17): `dotnet test` sobre a solution
+      # restaura todos os projetos mas COMPILA apenas o projeto de teste e sua cadeia
+      # de dependencias (Order.Domain.Tests -> Order.Domain -> Shared). Um erro de
+      # sintaxe num projeto de servico passava batido por este gate e so' aparecia no
+      # `docker build`, um job depois — contrariando a Decisao 2 do ADR-0020, que
+      # coloca este job como o primeiro bloqueio da esteira. O build explicito da
+      # solution inteira fecha essa lacuna; o `--no-build` no teste seguinte evita
+      # recompilar.
+      - name: dotnet build (solution inteira)
+        run: dotnet build DevOpsProjectEcommerce.sln --configuration Release
+
       - name: dotnet test
-        run: dotnet test DevOpsProjectEcommerce.sln --configuration Release
+        run: dotnet test DevOpsProjectEcommerce.sln --configuration Release --no-build
 
   # ---------------------------------------------------------------------------------------
   # Job de staging (ADR-0014, fluxo canonico) - build + push.
