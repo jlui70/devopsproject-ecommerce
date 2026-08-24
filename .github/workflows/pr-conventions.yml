@@ -1,0 +1,55 @@
+name: PR Conventions
+
+# ADR-0025, Decisao 1 — o prefixo `feature/` nao e' convencao de nomenclatura, e'
+# fronteira de seguranca. A trust policy da `github-staging-role`
+# (terraform/cicd/iam.github-staging-role.tf) so' permite assumir a role a partir de
+# `refs/heads/develop` e `refs/heads/feature/*`, e o `deploy-backend.yml` dispara
+# exatamente nesses mesmos refs.
+#
+# Consequencia sem este gate: um PR aberto de uma branch com outro prefixo (fix/,
+# chore/, hotfix/) chega a' `develop` sem NENHUMA execucao de CI sobre ele — passa
+# pelo gate de revisao do ADR-0014 e escapa do gate de build do ADR-0020. Aconteceu
+# ao vivo em 2026-08-24 com o PR #8, aberto de `fix/ci-build-solution`: nenhum run foi
+# disparado, e o PR ficou elegivel para merge sem validacao.
+#
+# Este workflow torna a lacuna explicita no proprio PR, em vez de silenciosa. Nao usa
+# credencial nenhuma da AWS de proposito: e' so' uma checagem de convencao.
+
+on:
+  pull_request:
+    branches: [develop]
+
+permissions:
+  contents: read
+
+jobs:
+  branch-name:
+    runs-on: ubuntu-latest
+    steps:
+      - name: A branch de origem precisa comecar com "feature/"
+        run: |
+          BRANCH="${{ github.head_ref }}"
+          echo "Branch de origem: ${BRANCH}"
+
+          case "${BRANCH}" in
+            feature/*)
+              echo "OK — a branch casa com o padrao exigido pela trust policy da github-staging-role."
+              ;;
+            *)
+              echo "::error title=Prefixo de branch invalido::A branch '${BRANCH}' nao comeca com 'feature/'."
+              cat <<'MSG'
+
+          Renomeie a branch e reabra o PR:
+
+              git branch -m "<nome-atual>" "feature/<nome>"
+              git push origin --delete "<nome-atual>"
+              git push -u origin "feature/<nome>"
+
+          Motivo: o `deploy-backend.yml` dispara apenas em `develop` e `feature/**`, e a
+          trust policy da `github-staging-role` autoriza OIDC apenas nesses mesmos refs
+          (terraform/cicd/iam.github-staging-role.tf). Uma branch com outro prefixo chega
+          a' `develop` sem nenhuma execucao de CI sobre ela. Ver ADR-0025, Decisao 1.
+          MSG
+              exit 1
+              ;;
+          esac
