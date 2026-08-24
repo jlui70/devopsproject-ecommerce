@@ -11,7 +11,7 @@ namespace DevOpsProjectEcommerce.Main.Controllers
         {
             return Ok(new
             {
-                message = "Hello World v-demo-20260824113305 from Main Service,
+                message = "Hello World v-demo-20260824113305 from Main Service",
                 version = "v-demo-20260824113305",
                 timestamp = DateTime.UtcNow
             });
