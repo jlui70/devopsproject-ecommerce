@@ -4,6 +4,8 @@ using HealthChecks.UI.Client;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using DevOpsProjectEcommerce.IdentityServer.Middlewares;
 using DevOpsProjectEcommerce.IdentityServer.Modules;
+using DevOpsProjectEcommerce.IdentityServer.Startup;
+using DevOpsProjectEcommerce.IdentityServer.Domain.Repositories.Contexts;
 using Serilog;
 using Serilog.Events;
 using Serilog.Exceptions;
@@ -35,6 +37,16 @@ try
     builder.Services.AddSwaggerGen();
 
     var app = builder.Build();
+
+    // ADR-0025, Decisao 2 — converge o usuario admin para o que esta na configuracao.
+    // Resolver o contexto aqui tambem dispara o Database.Migrate() registrado no
+    // InfrastructureModule, entao a sincronizacao acontece depois das migrations.
+    using (var scope = app.Services.CreateScope())
+    {
+        var identityContext = scope.ServiceProvider.GetRequiredService<IdentityServerContext>();
+        AdminUserSeeder.SyncAdminUser(identityContext, builder.Configuration);
+    }
+
     app.Map("/identity", applicationBuilder =>
     {
         applicationBuilder.UseSwagger();
